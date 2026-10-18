@@ -49,7 +49,7 @@ async function loadMimit(): Promise<Raw[]> {
   const anaLines = ana.split(/\r?\n/);
   const sepA = anaLines[1]?.includes("|") ? "|" : ";";
   for (let i = 2; i < anaLines.length; i++) {
-    const c = splitLine(anaLines[i], sepA);
+    const c = splitLine(anaLines[i], sepA) as [string, string, string, string, string, string, string, string, string, string];
     if (c.length < 10) continue;
     const lat = parseFloat(c[8]);
     const lng = parseFloat(c[9]);
@@ -68,7 +68,7 @@ async function loadMimit(): Promise<Raw[]> {
   const prLines = pr.split(/\r?\n/);
   const sepP = prLines[1]?.includes("|") ? "|" : ";";
   for (let i = 2; i < prLines.length; i++) {
-    const c = splitLine(prLines[i], sepP);
+    const c = splitLine(prLines[i], sepP) as [string, string, string, string, string, string, string, string, string, string];
     if (c.length < 5) continue;
     const s = map.get(c[0]);
     const price = parseFloat(c[2]);
