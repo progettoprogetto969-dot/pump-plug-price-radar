@@ -160,7 +160,7 @@ async function ocmItaly(key: string): Promise<Charger[]> {
 }
 
 export const getEvMode = createServerFn({ method: "GET" }).handler(async () => ({
-  nationwide: !!process.env.OCM_API_KEY,
+  nationwide: !!process.env['OCM_API_KEY'],
 }));
 
 export const getChargers = createServerFn({ method: "POST" })
@@ -169,7 +169,7 @@ export const getChargers = createServerFn({ method: "POST" })
     return { bounds: b ? parseBounds(b) : ALL_ITALY };
   })
   .handler(async ({ data }) => {
-    const key = process.env.OCM_API_KEY;
+    const key = process.env['OCM_API_KEY'];
     if (key) return { source: "ocm" as const, list: await ocmItaly(key) };
     const { s, w, n, e } = data.bounds;
     const q = `[out:json][timeout:25];node["amenity"="charging_station"](${s},${w},${n},${e});out 1500;`;
