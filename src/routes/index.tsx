@@ -1,8 +1,9 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { Fuel, Zap, X, Navigation, Loader2, Newspaper } from "lucide-react";
-import { getChargers, getEvMode, getFuelStations, getStation, type Bounds, type FuelKey } from "@/lib/data.functions";
+import { Fuel, Zap, X, Navigation, Loader2, Newspaper, RotateCw } from "lucide-react";
+import { getChargers, getFuelStations } from "@/lib/data.functions";
+import { MIMIT_ANAGRAFICA, MIMIT_PREZZI, bestPrice, parseMimit, type FuelKey, type FuelStation } from "@/lib/mimit";
 import { InstallButton } from "@/components/InstallButton";
 import { NewsPanel } from "@/components/NewsPanel";
 import type { MapPoint } from "@/components/MapView";
@@ -13,9 +14,9 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Carburanti Live — Prezzi benzina e colonnine elettriche" },
-      { name: "description", content: "Mappa dei prezzi carburanti MIMIT, colonnine di ricarica e news quotidiane su benzina e petrolio." },
+      { name: "description", content: "Mappa nazionale dei prezzi carburanti MIMIT, colonnine di ricarica e news quotidiane su benzina e petrolio." },
       { property: "og:title", content: "Carburanti Live — Prezzi benzina e colonnine" },
-      { property: "og:description", content: "Prezzi carburanti in tempo reale, colonnine elettriche e news sul petrolio." },
+      { property: "og:description", content: "Prezzi carburanti in tutta Italia, colonnine elettriche e news sul petrolio." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -32,58 +33,69 @@ const FUELS: { key: FuelKey; label: string }[] = [
 
 const dir = (lat: number, lng: number) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 
+/** Server first; if the ministry blocks the server, try straight from the visitor's browser. */
+async function loadStations(): Promise<FuelStation[]> {
+  const res = await getFuelStations();
+  if (res.ok) return res.stations;
+  try {
+    const [a, p] = await Promise.all([
+      fetch(MIMIT_ANAGRAFICA).then((r) => r.text()),
+      fetch(MIMIT_PREZZI).then((r) => r.text()),
+    ]);
+    const list = parseMimit(a, p);
+    if (list.length) return list;
+  } catch {
+    /* fall through */
+  }
+  throw new Error("I dati del MIMIT non sono raggiungibili in questo momento");
+}
+
 function Index() {
   const [mode, setMode] = useState<"fuel" | "ev">("fuel");
   const [fuel, setFuel] = useState<FuelKey>("benzina");
-  const [view, setView] = useState<{ b: Bounds; z: number } | null>(null);
   const [sel, setSel] = useState<string | null>(null);
-  const evMode = useQuery({ queryKey: ["evmode"], queryFn: () => getEvMode(), staleTime: Infinity });
-  const nationwide = evMode.data?.nationwide ?? false;
-  const evNeedsZoom = !nationwide && (!view || view.z < 10);
-  const tooFar = mode === "ev" && evNeedsZoom;
 
   const fuelQ = useQuery({
-    queryKey: ["fuel", fuel],
-    queryFn: () => getFuelStations({ data: { fuel } }),
-    enabled: mode === "fuel",
-    staleTime: 30 * 60 * 1000,
+    queryKey: ["mimit"],
+    queryFn: loadStations,
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
   });
   const evQ = useQuery({
-    queryKey: ["ev", nationwide ? "all" : view?.b],
-    queryFn: () => getChargers({ data: nationwide ? {} : { bounds: view!.b } }),
-    enabled: mode === "ev" && evMode.isSuccess && !evNeedsZoom,
-    placeholderData: keepPreviousData,
-    staleTime: 30 * 60 * 1000,
+    queryKey: ["ev"],
+    queryFn: () => getChargers({ data: {} }),
+    enabled: mode === "ev",
+    staleTime: 60 * 60 * 1000,
   });
 
   const { points, thresholds } = useMemo(() => {
     if (mode === "ev") {
-      return { points: (evQ.data?.list ?? []).map((c): MapPoint => ({ id: c.id, lat: c.lat, lng: c.lng, tone: "ev" })), thresholds: null };
+      return {
+        points: (evQ.data?.list ?? []).map((c): MapPoint => ({ id: c.id, lat: c.lat, lng: c.lng, tone: "ev" })),
+        thresholds: null,
+      };
     }
-    const list = fuelQ.data ?? [];
-    const sorted = list.map((s) => s.best).sort((a, b) => a - b);
+    const rows = (fuelQ.data ?? [])
+      .map((s) => ({ s, best: bestPrice(s, fuel) }))
+      .filter((r): r is { s: FuelStation; best: number } => r.best !== null);
+    const sorted = rows.map((r) => r.best).sort((a, b) => a - b);
     const t1 = sorted[Math.floor(sorted.length / 3)] ?? 0;
     const t2 = sorted[Math.floor((sorted.length * 2) / 3)] ?? 0;
     return {
       thresholds: sorted.length ? { t1, t2 } : null,
-      points: list.map((s): MapPoint => ({
+      points: rows.map(({ s, best }): MapPoint => ({
         id: s.id,
         lat: s.lat,
         lng: s.lng,
-        tone: s.best < t1 ? "low" : s.best < t2 ? "mid" : "high",
+        tone: best < t1 ? "low" : best < t2 ? "mid" : "high",
+        label: best.toFixed(3),
       })),
     };
-  }, [mode, fuelQ.data, evQ.data]);
+  }, [mode, fuel, fuelQ.data, evQ.data]);
 
-  const stationQ = useQuery({
-    queryKey: ["station", sel],
-    queryFn: () => getStation({ data: { id: sel! } }),
-    enabled: mode === "fuel" && !!sel,
-  });
-  const station = mode === "fuel" && sel ? stationQ.data ?? undefined : undefined;
+  const station = mode === "fuel" ? fuelQ.data?.find((s) => s.id === sel) : undefined;
   const charger = mode === "ev" ? evQ.data?.list.find((c) => c.id === sel) : undefined;
-  const loading = mode === "fuel" ? fuelQ.isFetching : evQ.isFetching;
-  const error = mode === "fuel" ? fuelQ.error : evQ.error;
+  const q = mode === "fuel" ? fuelQ : evQ;
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -126,25 +138,27 @@ function Index() {
       <main className="relative h-[75dvh] overflow-hidden border-y border-border">
         <ClientOnly fallback={<div className="h-full w-full bg-muted" />}>
           <Suspense fallback={<div className="h-full w-full bg-muted" />}>
-            <MapView points={tooFar ? [] : points} onBounds={(b, z) => setView({ b, z })} onSelect={setSel} />
+            <MapView points={points} kind={mode} onSelect={setSel} />
           </Suspense>
         </ClientOnly>
 
-        <div className="pointer-events-none absolute left-1/2 top-3 z-[1000] -translate-x-1/2">
-          {tooFar ? (
-            <div className="status-pill">Avvicina la mappa per vedere le colonnine</div>
-          ) : loading ? (
-            <div className="status-pill"><Loader2 className="h-4 w-4 animate-spin" /> Caricamento…</div>
-          ) : error ? (
-            <div className="status-pill text-destructive">{(error as Error).message}</div>
+        <div className="absolute left-1/2 top-3 z-[1000] -translate-x-1/2">
+          {q.isFetching ? (
+            <div className="status-pill"><Loader2 className="h-4 w-4 animate-spin" /> Caricamento dati nazionali…</div>
+          ) : q.error ? (
+            <div className="status-pill text-destructive">
+              {(q.error as Error).message}
+              <button className="ml-2 flex items-center gap-1 text-primary" onClick={() => q.refetch()}>
+                <RotateCw className="h-3.5 w-3.5" /> Riprova
+              </button>
+            </div>
           ) : (
-            <div className="status-pill">{points.length.toLocaleString("it-IT")} {mode === "fuel" ? "distributori in Italia" : nationwide ? "colonnine in Italia" : "colonnine in zona"}</div>
+            <div className="status-pill">
+              {points.length.toLocaleString("it-IT")} {mode === "fuel" ? "distributori in Italia" : "colonnine in Italia"}
+            </div>
           )}
         </div>
 
-        {mode === "fuel" && sel && stationQ.isFetching && (
-          <aside className="detail-panel"><Loader2 className="h-5 w-5 animate-spin" /></aside>
-        )}
         {(station || charger) && (
           <aside className="detail-panel">
             <button className="absolute right-3 top-3 text-muted-foreground" onClick={() => setSel(null)} aria-label="Chiudi">

@@ -124,6 +124,7 @@
   --price-mid: oklch(0.85 0.16 95);
   --price-high: oklch(0.65 0.21 27);
   --ev: oklch(0.75 0.14 220);
+  --pin-ink: oklch(0.17 0.01 270);
   --shadow-panel: 0 20px 50px -15px oklch(0 0 0 / 60%);
 }
 
@@ -157,7 +158,12 @@
   .dot-mid, .pin-mid { background:var(--price-mid); }
   .dot-high, .pin-high { background:var(--price-high); }
   .pin-ev { background:var(--ev); }
-  .pin { display:flex; align-items:center; justify-content:center; height:22px; min-width:22px; padding:0 6px; width:fit-content; margin:0 auto; border-radius:6px; font:700 11px/1 var(--font-sans); color:oklch(0.15 0 0); border:2px solid oklch(0.15 0 0 / 70%); box-shadow:0 3px 8px oklch(0 0 0 / 40%); cursor:pointer; }
+  .pin { display:flex; align-items:center; gap:3px; height:28px; padding:0 7px 0 4px; width:fit-content; margin:0 auto; border-radius:999px; font:800 11px/1 var(--font-sans); color:var(--pin-ink); border:2px solid var(--pin-ink); box-shadow:0 4px 10px oklch(0 0 0 / 45%); cursor:pointer; transition:transform .12s; }
+  .pin span { display:grid; place-items:center; width:20px; height:20px; border-radius:999px; background:var(--pin-ink); font-size:11px; }
+  .pin:hover { transform:scale(1.12); }
+  .pin-tip { display:block; width:0; height:0; margin:-1px auto 0; border:6px solid transparent; border-top-color:var(--pin-ink); }
+  .cluster { display:grid; place-items:center; border-radius:999px; font:800 13px/1 var(--font-display); color:var(--primary-foreground); background:var(--primary); border:3px solid color-mix(in oklab, var(--primary) 40%, transparent); box-shadow:0 0 0 6px color-mix(in oklab, var(--primary) 25%, transparent), 0 6px 14px oklch(0 0 0 / 40%); background-clip:padding-box; }
+  .cluster-ev { background:var(--ev); border-color:color-mix(in oklab, var(--ev) 40%, transparent); box-shadow:0 0 0 6px color-mix(in oklab, var(--ev) 25%, transparent), 0 6px 14px oklch(0 0 0 / 40%); }
   .status-pill { display:flex; align-items:center; gap:.4rem; padding:.4rem .9rem; border-radius:999px; background:var(--popover); color:var(--popover-foreground); font-size:.8rem; font-weight:600; box-shadow:var(--shadow-panel); }
   .detail-panel { position:absolute; z-index:1000; bottom:1rem; left:1rem; right:1rem; max-width:24rem; max-height:70%; overflow:auto; padding:1.1rem; border-radius:1rem; background:var(--card); color:var(--card-foreground); border:1px solid var(--border); box-shadow:var(--shadow-panel); }
   .btn-directions { margin-top:1rem; display:flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem; border-radius:.7rem; font-weight:700; background:var(--primary); color:var(--primary-foreground); }

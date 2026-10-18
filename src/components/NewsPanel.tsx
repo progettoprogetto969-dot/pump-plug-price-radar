@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Newspaper } from "lucide-react";
 import { getNews } from "@/lib/data.functions";
-import fallback from "@/assets/news-fallback.jpg";
 
 export function NewsPanel() {
   const { data, isLoading, isError } = useQuery({
@@ -15,7 +14,7 @@ export function NewsPanel() {
         <Newspaper className="h-6 w-6 text-primary" />
         <h2 className="font-display text-2xl font-extrabold">Notizie del giorno su benzina e petrolio</h2>
         <span className="text-xs text-muted-foreground">
-          Solo testate italiane: ANSA · TG1/Rai News · TG5/Tgcom24 · La7 · Sky TG24 · Il Sole 24 Ore · Repubblica · Corriere
+          Solo testate italiane ufficiali, con la foto originale dell'articolo
         </span>
       </header>
       {isLoading && <p className="text-sm text-muted-foreground">Caricamento notizie…</p>}
@@ -25,8 +24,9 @@ export function NewsPanel() {
         {data?.map((n) => (
           <article key={n.link} className="news-card">
             <img
-              src={n.image ?? fallback}
-              onError={(e) => ((e.currentTarget as HTMLImageElement).src = fallback)}
+              src={n.image}
+              referrerPolicy="no-referrer"
+              onError={(e) => ((e.currentTarget.closest("article") as HTMLElement).style.display = "none")}
               alt=""
               loading="lazy"
               className="aspect-video w-full object-cover"
