@@ -32,8 +32,8 @@ type Raw = Omit<FuelStation, "best">;
 const UA = { "User-Agent": "Mozilla/5.0 (CarburantiLive/1.0)", Accept: "*/*" };
 let cache: { at: number; stations: Raw[] } | null = null;
 
-function splitLine(line: string, sep: string) {
-  return line.split(sep).map((s) => s.trim());
+function splitLine(line: string | undefined, sep: string): string[] {
+  return (line ?? "").split(sep).map((s) => s.trim());
 }
 
 async function loadMimit(): Promise<Raw[]> {
@@ -144,12 +144,12 @@ export const getChargers = createServerFn({ method: "POST" })
         .join(", ");
       return {
         id: String(el.id),
-        name: t.name || t.operator || "Colonnina di ricarica",
-        operator: t.operator || t.network || t.brand || "—",
+        name: t['name'] || t['operator'] || "Colonnina di ricarica",
+        operator: t['operator'] || t['network'] || t['brand'] || "—",
         lat: el.lat,
         lng: el.lon,
         sockets: sockets || "—",
-        capacity: t.capacity || "—",
+        capacity: t['capacity'] || "—",
         power: power || "—",
       };
     });
@@ -166,7 +166,7 @@ const FEEDS: { source: string; url: string }[] = [
     ["Il Sole 24 Ore", "ilsole24ore.com"],
     ["Sky TG24", "tg24.sky.it"],
     ["ANSA", "ansa.it"],
-  ].map(([source, site]) => ({
+  ].map(([source = "", site = ""]) => ({
     source,
     url: `https://news.google.com/rss/search?q=${encodeURIComponent(`(benzina OR carburanti OR petrolio OR greggio) site:${site} when:3d`)}&hl=it&gl=IT&ceid=IT:it`,
   })),
