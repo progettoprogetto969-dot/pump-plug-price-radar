@@ -29,6 +29,7 @@ export type Charger = {
 export type NewsItem = { title: string; link: string; source: string; date: string };
 
 type Raw = Omit<FuelStation, "best">;
+const UA = { "User-Agent": "Mozilla/5.0 (CarburantiLive/1.0)", Accept: "*/*" };
 let cache: { at: number; stations: Raw[] } | null = null;
 
 function splitLine(line: string, sep: string) {
@@ -38,8 +39,8 @@ function splitLine(line: string, sep: string) {
 async function loadMimit(): Promise<Raw[]> {
   if (cache && Date.now() - cache.at < 60 * 60 * 1000) return cache.stations;
   const [anaRes, prRes] = await Promise.all([
-    fetch("https://www.mimit.gov.it/images/exportCSV/anagrafica_impianti_attivi.csv"),
-    fetch("https://www.mimit.gov.it/images/exportCSV/prezzo_alle_8.csv"),
+    fetch("https://www.mimit.gov.it/images/exportCSV/anagrafica_impianti_attivi.csv", { headers: UA, signal: AbortSignal.timeout(40000) }),
+    fetch("https://www.mimit.gov.it/images/exportCSV/prezzo_alle_8.csv", { headers: UA, signal: AbortSignal.timeout(40000) }),
   ]);
   if (!anaRes.ok || !prRes.ok) throw new Error(`MIMIT non raggiungibile (${anaRes.status}/${prRes.status})`);
   const [ana, pr] = await Promise.all([anaRes.text(), prRes.text()]);
@@ -124,7 +125,7 @@ export const getChargers = createServerFn({ method: "POST" })
     const q = `[out:json][timeout:25];node["amenity"="charging_station"](${s},${w},${n},${e});out 500;`;
     const res = await fetch("https://overpass-api.de/api/interpreter", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { ...UA, "Content-Type": "application/x-www-form-urlencoded" },
       body: "data=" + encodeURIComponent(q),
     });
     if (!res.ok) throw new Error(`Servizio colonnine non disponibile (${res.status})`);
@@ -196,7 +197,7 @@ export const getNews = createServerFn({ method: "GET" }).handler(async () => {
       const xml = await r.text();
       const items: NewsItem[] = [];
       for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-        const b = m[1];
+        const b = m[1] ?? "";
         const title = clean(b.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "");
         const link = clean(b.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? "");
         const date = clean(b.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] ?? "");
