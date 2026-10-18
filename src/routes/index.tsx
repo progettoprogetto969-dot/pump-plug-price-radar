@@ -1,8 +1,8 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { Fuel, Zap, X, Navigation, Loader2 } from "lucide-react";
-import { getChargers, getFuelStations, type Bounds, type FuelKey } from "@/lib/data.functions";
+import { Fuel, Zap, X, Navigation, Loader2, Newspaper } from "lucide-react";
+import { getChargers, getEvMode, getFuelStations, getStation, type Bounds, type FuelKey } from "@/lib/data.functions";
 import { InstallButton } from "@/components/InstallButton";
 import { NewsPanel } from "@/components/NewsPanel";
 import type { MapPoint } from "@/components/MapView";
@@ -37,60 +37,62 @@ function Index() {
   const [fuel, setFuel] = useState<FuelKey>("benzina");
   const [view, setView] = useState<{ b: Bounds; z: number } | null>(null);
   const [sel, setSel] = useState<string | null>(null);
-  const tooFar = !view || view.z < 11;
+  const evMode = useQuery({ queryKey: ["evmode"], queryFn: () => getEvMode(), staleTime: Infinity });
+  const nationwide = evMode.data?.nationwide ?? false;
+  const evNeedsZoom = !nationwide && (!view || view.z < 10);
+  const tooFar = mode === "ev" && evNeedsZoom;
 
   const fuelQ = useQuery({
-    queryKey: ["fuel", fuel, view?.b],
-    queryFn: () => getFuelStations({ data: { bounds: view!.b, fuel } }),
-    enabled: mode === "fuel" && !tooFar,
-    placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000,
+    queryKey: ["fuel", fuel],
+    queryFn: () => getFuelStations({ data: { fuel } }),
+    enabled: mode === "fuel",
+    staleTime: 30 * 60 * 1000,
   });
   const evQ = useQuery({
-    queryKey: ["ev", view?.b],
-    queryFn: () => getChargers({ data: { bounds: view!.b } }),
-    enabled: mode === "ev" && !tooFar,
+    queryKey: ["ev", nationwide ? "all" : view?.b],
+    queryFn: () => getChargers({ data: nationwide ? {} : { bounds: view!.b } }),
+    enabled: mode === "ev" && evMode.isSuccess && !evNeedsZoom,
     placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,
   });
 
   const { points, thresholds } = useMemo(() => {
     if (mode === "ev") {
-      return { points: (evQ.data ?? []).map((c): MapPoint => ({ id: c.id, lat: c.lat, lng: c.lng, tone: "ev" })), thresholds: null };
+      return { points: (evQ.data?.list ?? []).map((c): MapPoint => ({ id: c.id, lat: c.lat, lng: c.lng, tone: "ev" })), thresholds: null };
     }
     const list = fuelQ.data ?? [];
-    const sorted = list.map((s) => s.best!).sort((a, b) => a - b);
+    const sorted = list.map((s) => s.best).sort((a, b) => a - b);
     const t1 = sorted[Math.floor(sorted.length / 3)] ?? 0;
     const t2 = sorted[Math.floor((sorted.length * 2) / 3)] ?? 0;
     return {
-      thresholds: sorted.length ? { min: sorted[0], t1, t2, max: sorted[sorted.length - 1] } : null,
+      thresholds: sorted.length ? { t1, t2 } : null,
       points: list.map((s): MapPoint => ({
         id: s.id,
         lat: s.lat,
         lng: s.lng,
-        tone: s.best! < t1 ? "low" : s.best! < t2 ? "mid" : "high",
-        label: s.best!.toFixed(3),
+        tone: s.best < t1 ? "low" : s.best < t2 ? "mid" : "high",
       })),
     };
   }, [mode, fuelQ.data, evQ.data]);
 
-  const station = mode === "fuel" ? fuelQ.data?.find((s) => s.id === sel) : undefined;
-  const charger = mode === "ev" ? evQ.data?.find((c) => c.id === sel) : undefined;
+  const stationQ = useQuery({
+    queryKey: ["station", sel],
+    queryFn: () => getStation({ data: { id: sel! } }),
+    enabled: mode === "fuel" && !!sel,
+  });
+  const station = mode === "fuel" && sel ? stationQ.data ?? undefined : undefined;
+  const charger = mode === "ev" ? evQ.data?.list.find((c) => c.id === sel) : undefined;
   const loading = mode === "fuel" ? fuelQ.isFetching : evQ.isFetching;
   const error = mode === "fuel" ? fuelQ.error : evQ.error;
 
   return (
-    <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header className="flex flex-col gap-3 border-b border-border p-3 lg:flex-row lg:items-stretch">
-        <div className="flex shrink-0 flex-col justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <img src="/icon-192.png" alt="" width={36} height={36} className="rounded-lg" />
-            <h1 className="font-display text-xl font-bold leading-none">Carburanti<span className="text-primary">Live</span></h1>
-          </div>
+    <div className="min-h-dvh bg-background text-foreground">
+      <header className="flex flex-wrap items-center gap-3 border-b border-border p-3">
+        <img src="/icon-192.png" alt="" width={36} height={36} className="rounded-lg" />
+        <h1 className="font-display text-xl font-bold leading-none">Carburanti<span className="text-primary">Live</span></h1>
+        <div className="ml-auto flex items-center gap-2">
+          <a href="#notizie" className="chip flex items-center gap-1.5"><Newspaper className="h-4 w-4" /> Notizie</a>
           <InstallButton />
-        </div>
-        <div className="min-w-0 flex-1">
-          <NewsPanel />
         </div>
       </header>
 
@@ -121,7 +123,7 @@ function Index() {
         )}
       </div>
 
-      <main className="relative flex-1 overflow-hidden">
+      <main className="relative h-[75dvh] overflow-hidden border-y border-border">
         <ClientOnly fallback={<div className="h-full w-full bg-muted" />}>
           <Suspense fallback={<div className="h-full w-full bg-muted" />}>
             <MapView points={tooFar ? [] : points} onBounds={(b, z) => setView({ b, z })} onSelect={setSel} />
@@ -130,16 +132,19 @@ function Index() {
 
         <div className="pointer-events-none absolute left-1/2 top-3 z-[1000] -translate-x-1/2">
           {tooFar ? (
-            <div className="status-pill">Avvicina la mappa per vedere le stazioni</div>
+            <div className="status-pill">Avvicina la mappa per vedere le colonnine</div>
           ) : loading ? (
             <div className="status-pill"><Loader2 className="h-4 w-4 animate-spin" /> Caricamento…</div>
           ) : error ? (
             <div className="status-pill text-destructive">{(error as Error).message}</div>
           ) : (
-            <div className="status-pill">{points.length} {mode === "fuel" ? "distributori" : "colonnine"} in zona</div>
+            <div className="status-pill">{points.length.toLocaleString("it-IT")} {mode === "fuel" ? "distributori in Italia" : nationwide ? "colonnine in Italia" : "colonnine in zona"}</div>
           )}
         </div>
 
+        {mode === "fuel" && sel && stationQ.isFetching && (
+          <aside className="detail-panel"><Loader2 className="h-5 w-5 animate-spin" /></aside>
+        )}
         {(station || charger) && (
           <aside className="detail-panel">
             <button className="absolute right-3 top-3 text-muted-foreground" onClick={() => setSel(null)} aria-label="Chiudi">
@@ -184,6 +189,7 @@ function Index() {
           </aside>
         )}
       </main>
+      <NewsPanel />
     </div>
   );
 }
