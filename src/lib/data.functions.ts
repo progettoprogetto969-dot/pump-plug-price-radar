@@ -159,6 +159,10 @@ async function ocmItaly(key: string): Promise<Charger[]> {
   return list;
 }
 
+export const getEvMode = createServerFn({ method: "GET" }).handler(async () => ({
+  nationwide: !!process.env.OCM_API_KEY,
+}));
+
 export const getChargers = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => {
     const b = (d as { bounds?: unknown })?.bounds;
