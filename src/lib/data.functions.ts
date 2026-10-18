@@ -60,6 +60,8 @@ export const getFuelStations = createServerFn({ method: "GET" }).handler(
   },
 );
 
+const ALL_ITALY: Bounds = { s: 35.4, w: 6.5, n: 47.2, e: 18.6 };
+
 let evCache: { at: number; list: Charger[] } | null = null;
 
 async function ocmItaly(key: string): Promise<Charger[]> {
@@ -141,25 +143,20 @@ export const getChargers = createServerFn({ method: "POST" })
     return { source: "osm" as const, list };
   });
 
+// Only official Italian outlets whose feeds carry the article's real photo.
 const FEEDS: { source: string; url: string }[] = [
   { source: "ANSA", url: "https://www.ansa.it/sito/notizie/economia/economia_rss.xml" },
   { source: "ANSA", url: "https://www.ansa.it/sito/ansait_rss.xml" },
+  { source: "TG1 / Rai News", url: "https://www.rainews.it/rss/tutti" },
+  { source: "TG1 / Rai News", url: "https://www.rainews.it/rss/ultimora" },
   { source: "Sky TG24", url: "https://tg24.sky.it/rss/tg24_economia.xml" },
   { source: "TG5 / Tgcom24", url: "https://www.tgcom24.mediaset.it/rss/economia.xml" },
   { source: "Il Sole 24 Ore", url: "https://www.ilsole24ore.com/rss/economia.xml" },
   { source: "la Repubblica", url: "https://www.repubblica.it/rss/economia/rss2.0.xml" },
   { source: "Corriere della Sera", url: "https://www.corriere.it/rss/economia.xml" },
-  { source: "QuiFinanza", url: "https://quifinanza.it/feed/" },
-  ...[
-    ["TG1 / Rai News", "rainews.it"],
-    ["La7", "la7.it"],
-  ].map(([source = "", site = ""]) => ({
-    source,
-    url: `https://news.google.com/rss/search?q=${encodeURIComponent(`(benzina OR carburanti OR petrolio OR greggio OR accise) site:${site} when:7d`)}&hl=it&gl=IT&ceid=IT:it`,
-  })),
 ];
 
-const KEYWORDS = /benzin|carburant|petroli|greggio|gasolio|diesel|brent|wti|opec|accise|distribut|raffiner|barile|metano|gpl|pieno|rifornim/i;
+const KEYWORDS = /benzin|carburant|petroli|greggio|gasolio|diesel|brent|wti|opec|accise|distributor|raffiner|barile|metano|gpl|pieno|rifornim/i;
 
 const clean = (s: string) =>
   s
@@ -183,11 +180,10 @@ function findImage(b: string): string | null {
 }
 
 async function ogImage(url: string): Promise<string | null> {
-  if (url.includes("news.google.com")) return null;
   try {
     const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(6000) });
     if (!r.ok) return null;
-    const html = (await r.text()).slice(0, 200000);
+    const html = (await r.text()).slice(0, 300000);
     const m =
       html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
       html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
@@ -197,40 +193,50 @@ async function ogImage(url: string): Promise<string | null> {
   }
 }
 
+// Generic outlet logos/placeholders are not article photos.
+const isGeneric = (u: string) => /logo|placeholder|default|share[-_]?image|og[-_]?default|favicon/i.test(u);
+
 export const getNews = createServerFn({ method: "GET" }).handler(async (): Promise<NewsItem[]> => {
   const results = await Promise.allSettled(
     FEEDS.map(async (f) => {
       const r = await fetch(f.url, { headers: UA, signal: AbortSignal.timeout(10000) });
       if (!r.ok) return [];
       const xml = await r.text();
-      const items: NewsItem[] = [];
+      const items: (Omit<NewsItem, "image"> & { image: string | null })[] = [];
       for (const m of xml.matchAll(/<item[\s>]([\s\S]*?)<\/item>/g)) {
         const b = m[1] ?? "";
-        let title = clean(b.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "");
+        const title = clean(b.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "");
         const link = clean(b.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? "");
         const date = clean(b.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] ?? "");
-        if (link.includes("news.google.com")) title = title.replace(/\s+-\s+[^-]+$/, "");
-        if (title && link && KEYWORDS.test(title))
-          items.push({ title, link, source: f.source, date, image: findImage(b) });
+        if (title && link && KEYWORDS.test(title)) items.push({ title, link, source: f.source, date, image: findImage(b) });
       }
       return items;
     }),
   );
-  const seen = new Set<string>();
-  const all = results
+  const seenTitle = new Set<string>();
+  const candidates = results
     .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
     .filter((i) => {
-      const k = i.title.toLowerCase().slice(0, 60);
-      if (seen.has(k)) return false;
-      seen.add(k);
+      const k = i.title.toLowerCase().replace(/\W+/g, " ").slice(0, 60);
+      if (seenTitle.has(k)) return false;
+      seenTitle.add(k);
       return true;
     })
     .sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0))
-    .slice(0, 24);
+    .slice(0, 36);
   await Promise.all(
-    all.map(async (i) => {
-      if (!i.image) i.image = await ogImage(i.link);
+    candidates.map(async (i) => {
+      if (!i.image || isGeneric(i.image)) i.image = await ogImage(i.link);
     }),
   );
-  return all;
+  const seenImg = new Set<string>();
+  const out: NewsItem[] = [];
+  for (const i of candidates) {
+    if (!i.image || isGeneric(i.image)) continue;
+    const key = i.image.split("?")[0] ?? i.image;
+    if (seenImg.has(key)) continue;
+    seenImg.add(key);
+    out.push({ ...i, image: i.image });
+  }
+  return out.slice(0, 24);
 });
