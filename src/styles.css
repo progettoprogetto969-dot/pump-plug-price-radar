@@ -162,3 +162,10 @@
   .detail-panel { position:absolute; z-index:1000; bottom:1rem; left:1rem; right:1rem; max-width:24rem; max-height:70%; overflow:auto; padding:1.1rem; border-radius:1rem; background:var(--card); color:var(--card-foreground); border:1px solid var(--border); box-shadow:var(--shadow-panel); }
   .btn-directions { margin-top:1rem; display:flex; align-items:center; justify-content:center; gap:.5rem; padding:.7rem; border-radius:.7rem; font-weight:700; background:var(--primary); color:var(--primary-foreground); }
 }
+
+@layer components {
+  .news-card { display:flex; flex-direction:column; overflow:hidden; border-radius:1rem; background:var(--card); border:1px solid var(--border); transition:transform .15s, border-color .15s; }
+  .news-card:hover { transform:translateY(-2px); border-color:var(--primary); }
+  .news-link { margin-top:auto; display:inline-flex; align-items:center; gap:.35rem; font-size:.8rem; font-weight:700; color:var(--primary); }
+  .news-link:hover { text-decoration:underline; }
+}
