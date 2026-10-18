@@ -1,19 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
+import { MIMIT_ANAGRAFICA, MIMIT_PREZZI, parseMimit, type FuelStation } from "./mimit";
 
 export type Bounds = { s: number; w: number; n: number; e: number };
-export type FuelKey = "benzina" | "diesel" | "gpl" | "metano";
-
-export type FuelStation = {
-  id: string;
-  name: string;
-  brand: string;
-  address: string;
-  city: string;
-  lat: number;
-  lng: number;
-  prices: { fuel: string; price: number; self: boolean; date: string }[];
-  best: number | null;
-};
+export type { FuelKey, FuelStation } from "./mimit";
 
 export type Charger = {
   id: string;
@@ -26,66 +15,24 @@ export type Charger = {
   power: string;
 };
 
-export type NewsItem = { title: string; link: string; source: string; date: string; image: string | null };
+export type NewsItem = { title: string; link: string; source: string; date: string; image: string };
 
-type Raw = Omit<FuelStation, "best">;
-const UA = { "User-Agent": "Mozilla/5.0 (CarburantiLive/1.0)", Accept: "*/*" };
-let cache: { at: number; stations: Raw[] } | null = null;
+const UA = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CarburantiLive/1.0", Accept: "*/*" };
+let cache: { at: number; stations: FuelStation[] } | null = null;
 
-function splitLine(line: string | undefined, sep: string): string[] {
-  return (line ?? "").split(sep).map((s) => s.trim());
-}
-
-async function loadMimit(): Promise<Raw[]> {
-  if (cache && Date.now() - cache.at < 60 * 60 * 1000) return cache.stations;
-  const [anaRes, prRes] = await Promise.all([
-    fetch("https://www.mimit.gov.it/images/exportCSV/anagrafica_impianti_attivi.csv", { headers: UA, signal: AbortSignal.timeout(40000) }),
-    fetch("https://www.mimit.gov.it/images/exportCSV/prezzo_alle_8.csv", { headers: UA, signal: AbortSignal.timeout(40000) }),
-  ]);
-  if (!anaRes.ok || !prRes.ok) throw new Error(`MIMIT non raggiungibile (${anaRes.status}/${prRes.status})`);
-  const [ana, pr] = await Promise.all([anaRes.text(), prRes.text()]);
-
-  const map = new Map<string, Raw>();
-  const anaLines = ana.split(/\r?\n/);
-  const sepA = anaLines[1]?.includes("|") ? "|" : ";";
-  for (let i = 2; i < anaLines.length; i++) {
-    const c = splitLine(anaLines[i], sepA) as [string, string, string, string, string, string, string, string, string, string];
-    if (c.length < 10) continue;
-    const lat = parseFloat(c[8]);
-    const lng = parseFloat(c[9]);
-    if (!isFinite(lat) || !isFinite(lng) || lat === 0) continue;
-    map.set(c[0], {
-      id: c[0],
-      name: c[4] || c[1],
-      brand: c[2],
-      address: c[5],
-      city: `${c[6]} (${c[7]})`,
-      lat,
-      lng,
-      prices: [],
-    });
+async function fetchText(url: string) {
+  let last: unknown;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(25000) });
+      if (r.ok) return await r.text();
+      last = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      last = e;
+    }
   }
-  const prLines = pr.split(/\r?\n/);
-  const sepP = prLines[1]?.includes("|") ? "|" : ";";
-  for (let i = 2; i < prLines.length; i++) {
-    const c = splitLine(prLines[i], sepP) as [string, string, string, string, string, string, string, string, string, string];
-    if (c.length < 5) continue;
-    const s = map.get(c[0]);
-    const price = parseFloat(c[2]);
-    if (!s || !isFinite(price) || price <= 0) continue;
-    s.prices.push({ fuel: c[1], price, self: c[3] === "1", date: c[4] });
-  }
-  const stations = [...map.values()].filter((s) => s.prices.length);
-  cache = { at: Date.now(), stations };
-  return stations;
+  throw last;
 }
-
-const FUEL_MATCH: Record<FuelKey, (f: string) => boolean> = {
-  benzina: (f) => /^benzina/i.test(f),
-  diesel: (f) => /gasolio|diesel/i.test(f) && !/riscaldamento/i.test(f),
-  gpl: (f) => /gpl/i.test(f),
-  metano: (f) => /metano|gnl|l-gnc/i.test(f),
-};
 
 function parseBounds(d: unknown): Bounds {
   const b = d as Bounds;
@@ -95,36 +42,23 @@ function parseBounds(d: unknown): Bounds {
   return b;
 }
 
-export type StationPin = { id: string; lat: number; lng: number; best: number };
-
-const ALL_ITALY: Bounds = { s: 35.4, w: 6.5, n: 47.2, e: 18.6 };
-
-export const getFuelStations = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => {
-    const x = d as { fuel: FuelKey };
-    if (!["benzina", "diesel", "gpl", "metano"].includes(x?.fuel)) throw new Error("fuel");
-    return { fuel: x.fuel };
-  })
-  .handler(async ({ data }): Promise<StationPin[]> => {
-    const all = await loadMimit();
-    const match = FUEL_MATCH[data.fuel];
-    const out: StationPin[] = [];
-    for (const st of all) {
-      const rel = st.prices.filter((p) => match(p.fuel));
-      if (!rel.length) continue;
-      const selfP = rel.filter((p) => p.self).map((p) => p.price);
-      const best = Math.min(...(selfP.length ? selfP : rel.map((p) => p.price)));
-      out.push({ id: st.id, lat: +st.lat.toFixed(5), lng: +st.lng.toFixed(5), best });
+/** Whole national MIMIT dataset. Never throws: returns ok:false so the browser can try its own fallback. */
+export const getFuelStations = createServerFn({ method: "GET" }).handler(
+  async (): Promise<{ ok: true; stations: FuelStation[] } | { ok: false; error: string }> => {
+    try {
+      if (!cache || Date.now() - cache.at > 60 * 60 * 1000) {
+        const [ana, pr] = await Promise.all([fetchText(MIMIT_ANAGRAFICA), fetchText(MIMIT_PREZZI)]);
+        const stations = parseMimit(ana, pr);
+        if (!stations.length) throw new Error("file vuoto");
+        cache = { at: Date.now(), stations };
+      }
+      return { ok: true, stations: cache.stations };
+    } catch (e) {
+      console.error("MIMIT fetch failed", e);
+      return { ok: false, error: "Il server del MIMIT non risponde" };
     }
-    return out;
-  });
-
-export const getStation = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ({ id: String((d as { id: unknown })?.id ?? "") }))
-  .handler(async ({ data }): Promise<FuelStation | null> => {
-    const st = (await loadMimit()).find((s) => s.id === data.id);
-    return st ? { ...st, best: null } : null;
-  });
+  },
+);
 
 let evCache: { at: number; list: Charger[] } | null = null;
 
