@@ -46,7 +46,7 @@ function proxyRoutes(): string[] {
 }
 
 function looksLikeMimit(text: string) {
-  return text.length > 1000 && /\|/.test(text.slice(0, 2000)) && !/<html/i.test(text.slice(0, 500));
+  return text.length > 1000 && /[|;]/.test(text.slice(0, 2000)) && !/<html/i.test(text.slice(0, 500));
 }
 
 async function fetchText(url: string) {
