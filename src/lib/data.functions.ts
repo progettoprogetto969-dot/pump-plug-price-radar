@@ -20,11 +20,17 @@ export type NewsItem = { title: string; link: string; source: string; date: stri
 const UA = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CarburantiLive/1.0", Accept: "*/*" };
 let cache: { at: number; stations: FuelStation[] } | null = null;
 
+/** Optional Italian-IP relay (e.g. "https://my-it-proxy.example/?url="); MIMIT blocks non-Italian servers. */
+function viaItaly(url: string) {
+  const p = process.env["MIMIT_PROXY_URL"];
+  return p ? p + encodeURIComponent(url) : url;
+}
+
 async function fetchText(url: string) {
   let last: unknown;
   for (let i = 0; i < 2; i++) {
     try {
-      const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(25000) });
+      const r = await fetch(viaItaly(url), { headers: UA, signal: AbortSignal.timeout(25000) });
       if (r.ok) return await r.text();
       last = new Error(`HTTP ${r.status}`);
     } catch (e) {
