@@ -21,18 +21,51 @@ const UA = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Carburanti
 let cache: { at: number; stations: FuelStation[] } | null = null;
 
 /** Optional Italian-IP relay (e.g. "https://my-it-proxy.example/?url="); MIMIT blocks non-Italian servers. */
-function viaItaly(url: string) {
-  const p = process.env["MIMIT_PROXY_URL"];
-  return p ? p + encodeURIComponent(url) : url;
+/**
+ * Proxy rotation. Each entry is a URL prefix; the target URL is appended URL-encoded.
+ * Custom Italian relays (MIMIT_PROXY_URL / MIMIT_PROXY_URLS, comma-separated) go first,
+ * then public web relays, then the direct call. The last working route is remembered.
+ */
+const PUBLIC_RELAYS = [
+  "https://api.codetabs.com/v1/proxy?quest=",
+  "https://api.allorigins.win/raw?url=",
+  "https://corsproxy.io/?url=",
+  "https://thingproxy.freeboard.io/fetch/",
+];
+let preferredRoute: string | null = null;
+
+function proxyRoutes(): string[] {
+  const custom = [process.env["MIMIT_PROXY_URL"], ...(process.env["MIMIT_PROXY_URLS"] ?? "").split(",")]
+    .map((s) => s?.trim())
+    .filter((s): s is string => !!s);
+  const all = [...custom, ...PUBLIC_RELAYS, ""];
+  if (preferredRoute !== null && all.includes(preferredRoute)) {
+    return [preferredRoute, ...all.filter((r) => r !== preferredRoute)];
+  }
+  return all;
+}
+
+function looksLikeMimit(text: string) {
+  return text.length > 1000 && /[|;]/.test(text.slice(0, 2000)) && !/<html/i.test(text.slice(0, 500));
 }
 
 async function fetchText(url: string) {
-  let last: unknown;
-  for (let i = 0; i < 2; i++) {
+  let last: unknown = new Error("nessun proxy disponibile");
+  for (const route of proxyRoutes()) {
+    const target = route ? route + encodeURIComponent(url) : url;
     try {
-      const r = await fetch(viaItaly(url), { headers: UA, signal: AbortSignal.timeout(25000) });
-      if (r.ok) return await r.text();
-      last = new Error(`HTTP ${r.status}`);
+      const r = await fetch(target, { headers: UA, signal: AbortSignal.timeout(25000) });
+      if (!r.ok) {
+        last = new Error(`HTTP ${r.status} via ${route || "diretto"}`);
+        continue;
+      }
+      const text = await r.text();
+      if (!looksLikeMimit(text)) {
+        last = new Error(`risposta non valida via ${route || "diretto"}`);
+        continue;
+      }
+      preferredRoute = route;
+      return text;
     } catch (e) {
       last = e;
     }
