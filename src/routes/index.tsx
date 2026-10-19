@@ -33,15 +33,37 @@ const FUELS: { key: FuelKey; label: string }[] = [
 
 const dir = (lat: number, lng: number) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 
-/** Server first; if the ministry blocks the server, try straight from the visitor's browser. */
+// Keyless, CORS-enabled routes to the public MIMIT Open Data files, tried in order.
+const CORS_ROUTES: ((u: string) => string)[] = [
+  (u) => u,
+  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+
+async function fetchCsv(url: string): Promise<string> {
+  for (const route of CORS_ROUTES) {
+    try {
+      const r = await fetch(route(url), { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) continue;
+      const t = await r.text();
+      if (t.length > 1000 && /;|\|/.test(t.slice(0, 500))) return t;
+    } catch {
+      /* try next route */
+    }
+  }
+  throw new Error("non raggiungibile");
+}
+
+/** Server first (no CORS); if the ministry blocks it, fetch the open data from the browser via CORS-safe routes. */
 async function loadStations(): Promise<FuelStation[]> {
-  const res = await getFuelStations();
-  if (res.ok) return res.stations;
   try {
-    const [a, p] = await Promise.all([
-      fetch(MIMIT_ANAGRAFICA).then((r) => r.text()),
-      fetch(MIMIT_PREZZI).then((r) => r.text()),
-    ]);
+    const res = await getFuelStations();
+    if (res.ok) return res.stations;
+  } catch {
+    /* fall through */
+  }
+  try {
+    const [a, p] = await Promise.all([fetchCsv(MIMIT_ANAGRAFICA), fetchCsv(MIMIT_PREZZI)]);
     const list = parseMimit(a, p);
     if (list.length) return list;
   } catch {
